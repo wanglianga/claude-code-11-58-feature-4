@@ -243,6 +243,143 @@ class ConfigVersion(Base):
     note = Column(String(255), nullable=True)
 
 
+# ---------------- 馈线负荷情景:功率轨迹 / 供电拓扑 / 运行图 ----------------
+
+class PowerTrace(Base):
+    """实测(或标定)功率轨迹库:相近线路/车型/载荷条件下的牵引与再生功率形状。
+
+    series 为固定步长的归一化序列,长度由 duration_s / step_seconds 决定:
+    {"step_seconds": 10, "p_kw": [..正=牵引, 负=再生..],
+     "traction_kw": [..], "regen_kw": [..]}
+    能量侧来自已核对的运行能量片段(source_run_id/segment_id),保证轨迹可复核。
+    """
+    __tablename__ = "power_traces"
+    id = Column(Integer, primary_key=True)
+    code = Column(String(64), unique=True, nullable=False)
+    line_code = Column(String(32), nullable=False, index=True)
+    section_code = Column(String(32), nullable=False, index=True)
+    vehicle_model = Column(String(32), nullable=False, index=True)
+    consist_code = Column(String(32), nullable=False)
+    load_band = Column(String(16), nullable=False)       # LIGHT|MEDIUM|HEAVY
+    duration_s = Column(Integer, nullable=False)
+    traction_energy_kwh = Column(Float, nullable=False)  # 与主服务能量片段同口径
+    regen_energy_kwh = Column(Float, nullable=False)
+    sample_count = Column(Integer, nullable=False, default=1)  # 该条件下实测样本数
+    source_run_id = Column(Integer, ForeignKey("runs.id"), nullable=True)
+    source_segment_id = Column(Integer, ForeignKey("run_segments.id"), nullable=True)
+    series = Column(JSON, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class TopologyVersion(Base):
+    """供电拓扑生效版本。修订拓扑/馈线容量/反送边界生成新版本,旧版本保留。"""
+    __tablename__ = "topology_versions"
+    id = Column(Integer, primary_key=True)
+    code = Column(String(32), unique=True, nullable=False)   # 如 TOPO-V1
+    version = Column(Integer, nullable=False)
+    status = Column(String(16), nullable=False, default="ACTIVE")  # ACTIVE|SUPERSEDED
+    valid_from = Column(DateTime, nullable=False)
+    note = Column(String(255), nullable=True)
+    feeders = relationship("Feeder", back_populates="topology",
+                           cascade="all, delete-orphan")
+
+
+class Feeder(Base):
+    """牵引变电所馈线:容量上限与可接受反送功率边界,及其电气连接的区段列表。"""
+    __tablename__ = "feeders"
+    id = Column(Integer, primary_key=True)
+    topology_version_id = Column(Integer, ForeignKey("topology_versions.id"),
+                                 nullable=False, index=True)
+    code = Column(String(32), nullable=False)               # 如 F-S1
+    substation_serial = Column(String(64), nullable=False)  # 对应 SUBSTATION 设备
+    capacity_kw = Column(Float, nullable=False)
+    max_regen_accept_kw = Column(Float, nullable=False)     # 可接受反送功率边界(>=0)
+    # [{"section_code": "S1", "direction": "UP|DOWN|*"}]
+    sections = Column(JSON, nullable=False)
+    topology = relationship("TopologyVersion", back_populates="feeders")
+
+
+class TimetableVersion(Base):
+    """运行图生效版本。拟议运行图独立成版,不替换已发布现状对标数据。"""
+    __tablename__ = "timetable_versions"
+    id = Column(Integer, primary_key=True)
+    code = Column(String(32), unique=True, nullable=False)  # 如 TT-BASE / TT-PROP-A
+    version = Column(Integer, nullable=False)
+    kind = Column(String(16), nullable=False)               # BASELINE|PROPOSED
+    status = Column(String(16), nullable=False, default="DRAFT")  # DRAFT|ACTIVE|SUPERSEDED
+    line_code = Column(String(32), nullable=False)
+    valid_from = Column(DateTime, nullable=False)
+    headway_minutes = Column(Float, nullable=True)          # 发车间隔(规划输入,可空)
+    note = Column(String(255), nullable=True)
+    trips = relationship("TimetableTrip", back_populates="timetable",
+                         cascade="all, delete-orphan")
+
+
+class TimetableTrip(Base):
+    """运行图班次:锁定列车/车型/编组、载荷与区段行程(含供电分区切换时刻)。"""
+    __tablename__ = "timetable_trips"
+    id = Column(Integer, primary_key=True)
+    timetable_version_id = Column(Integer, ForeignKey("timetable_versions.id"),
+                                  nullable=False, index=True)
+    trip_key = Column(String(64), nullable=False)
+    train_code = Column(String(32), nullable=False)
+    vehicle_model = Column(String(32), nullable=False)
+    consist_code = Column(String(32), nullable=False)
+    load_band = Column(String(16), nullable=False)
+    # [{"section_code":"S1","direction":"UP","enter_at":iso,"exit_at":iso,
+    #   "stop_seconds":0}] —— 跨供电分区在实际切换时点拆开
+    legs = Column(JSON, nullable=False)
+    timetable = relationship("TimetableVersion", back_populates="trips")
+
+
+class Scenario(Base):
+    """拟议运行图的馈线负荷与容量余量情景。
+
+    情景结果必须引用同一组供电拓扑与运行图版本;method 区分两条独立预测路线:
+    TRACE_REPLAY(实测轨迹回放叠加) 与 ENVELOPE_MC(功率包络联合抽样),
+    二者对同一拟议运行图独立给出峰值与余量,互不为事后检查。
+    """
+    __tablename__ = "scenarios"
+    id = Column(Integer, primary_key=True)
+    code = Column(String(64), unique=True, nullable=False)
+    name = Column(String(128), nullable=False)
+    method = Column(String(16), nullable=False)          # TRACE_REPLAY|ENVELOPE_MC
+    topology_version_id = Column(Integer, ForeignKey("topology_versions.id"), nullable=False)
+    timetable_version_id = Column(Integer, ForeignKey("timetable_versions.id"), nullable=False)
+    baseline_scenario_id = Column(Integer, ForeignKey("scenarios.id"), nullable=True)
+    mc_runs = Column(Integer, nullable=False, default=1)
+    uncertainty_policy = Column(String(16), nullable=False, default="PLANNING")
+    status = Column(String(16), nullable=False, default="COMPUTED")  # COMPUTED|STALE
+    range_start = Column(DateTime, nullable=False)
+    range_end = Column(DateTime, nullable=False)
+    assumptions = Column(JSON, nullable=False)           # 受纳边界/拓宽/样本覆盖等假设
+    summary = Column(JSON, nullable=False)               # 全情景汇总(峰值馈线/总超限/总拒纳)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    note = Column(String(255), nullable=True)
+    results = relationship("FeederScenarioResult", back_populates="scenario",
+                           cascade="all, delete-orphan")
+
+
+class FeederScenarioResult(Base):
+    """单馈线情景结果:峰值区间、容量余量、超限时间窗、再生无法受纳范围与贡献班次。"""
+    __tablename__ = "feeder_scenario_results"
+    id = Column(Integer, primary_key=True)
+    scenario_id = Column(Integer, ForeignKey("scenarios.id"), nullable=False, index=True)
+    feeder_code = Column(String(32), nullable=False)
+    substation_serial = Column(String(32), nullable=False)
+    capacity_kw = Column(Float, nullable=False)
+    max_regen_accept_kw = Column(Float, nullable=False)
+    peak = Column(JSON, nullable=False)          # {"v","lo","hi"} kW
+    peak_window = Column(JSON, nullable=False)   # [{"start","end","peak_kw"}]
+    margin = Column(JSON, nullable=False)        # {"v","lo","hi"} kW 容量余量
+    overload_windows = Column(JSON, nullable=False)
+    rejected_regen = Column(JSON, nullable=False)  # {"energy_kwh": {"v","lo","hi"}, "windows":[...]}
+    trace_coverage = Column(JSON, nullable=False)  # 匹配层级/样本数/拓宽系数/稀缺标记
+    contributing_trips = Column(JSON, nullable=False)  # 峰值贡献班次组合
+    series = Column(JSON, nullable=True)         # 稀疏化后的净负荷/牵引/再生序列
+    scenario = relationship("Scenario", back_populates="results")
+
+
 def create_all():
     from . import models as _  # noqa
     Base.metadata.create_all(engine)

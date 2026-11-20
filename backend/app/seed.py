@@ -14,12 +14,14 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal
-from .models import (ConfigVersion, Consist, Device, Line, MeterReading, Run,
-                     RunConsist, RunEvent, Section, Train, User, create_all,
+from .models import (ConfigVersion, Consist, Device, Feeder, Line, MeterReading,
+                     PowerTrace, Run, RunConsist, RunEvent, Section, TimetableTrip,
+                     TimetableVersion, TopologyVersion, Train, User, create_all,
                      drop_all)
 from .services.evaluate import evaluate_run, rebuild_grid
 from .services.metrics import publish_run_metrics, reprocess_run
 from .services.reconcile import reconcile_grid_aligned, reconcile_run_aligned
+from .services.scenario import compute_scenario
 
 D1 = datetime(2026, 10, 20, 8, 0)   # 场景1/2
 D4 = datetime(2026, 10, 21, 14, 0)  # 场景4
@@ -288,8 +290,14 @@ def seed():
         # SUB-S3 在该窗口无任何读数(表计检修)-> 供电侧未知
         process(db, r6)
 
+        # ============ 馈线负荷与容量余量情景 ============
+        from .scenario_seed import seed_scenarios
+        run_by_key = {"RUN-1001": r1.id, "RUN-1002": r2.id, "RUN-1003": r3.id,
+                      "RUN-1004": r4.id, "RUN-1005": r5v2.id, "RUN-1006": r6.id}
+        scenario_codes = seed_scenarios(db, run_by_key)
+
         db.commit()
-        print("seed ok: 6 runs, 含五类验收场景")
+        print(f"seed ok: 6 runs, 含五类验收场景;馈线情景 {len(scenario_codes)} 个")
     finally:
         db.close()
 

@@ -9,6 +9,7 @@
         <el-menu-item index="/runs">运行与能量</el-menu-item>
         <el-menu-item index="/metrics">指标服务</el-menu-item>
         <el-menu-item index="/replay">复盘回查</el-menu-item>
+        <el-menu-item index="/feeder-scenarios">馈线负荷情景</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>

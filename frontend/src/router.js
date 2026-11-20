@@ -12,6 +12,8 @@ const routes = [
       { path: 'runs/:id', component: () => import('./views/RunDetail.vue') },
       { path: 'metrics', component: () => import('./views/Metrics.vue') },
       { path: 'replay', component: () => import('./views/Replay.vue') },
+      { path: 'feeder-scenarios', component: () => import('./views/FeederScenarios.vue') },
+      { path: 'feeder-scenarios/:id', component: () => import('./views/FeederScenarioDetail.vue') },
     ],
   },
 ]

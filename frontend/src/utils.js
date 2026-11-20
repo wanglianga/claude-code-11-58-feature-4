@@ -27,3 +27,15 @@ export const METRIC_LABEL = {
   KWH_PER_PASSENGER: '单位载客能耗(kWh/人)', REGEN_RATIO: '回馈比例',
 }
 export const SCOPE_LABEL = { RUN: '运行', SECTION: '区段', SHIFT: '班次', VEHICLE_MODEL: '车型' }
+export const METHOD_LABEL = {
+  TRACE_REPLAY: '实测轨迹回放', ENVELOPE_MC: '功率包络抽样',
+}
+export const METHOD_TAG = { TRACE_REPLAY: 'primary', ENVELOPE_MC: 'warning' }
+export const LEVEL_LABEL = {
+  EXACT: '精确匹配', LOAD_FALLBACK: '载荷档降级', CONSIST_FALLBACK: '编组降级',
+  SECTION_FALLBACK: '区段降级', NO_REFERENCE: '无参考轨迹(扩大区间)',
+}
+export const LEVEL_TAG = {
+  EXACT: 'success', LOAD_FALLBACK: 'info', CONSIST_FALLBACK: 'warning',
+  SECTION_FALLBACK: 'warning', NO_REFERENCE: 'danger',
+}
